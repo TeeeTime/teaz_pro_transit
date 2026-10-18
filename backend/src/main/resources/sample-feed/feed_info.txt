@@ -1,0 +1,2 @@
+feed_publisher_name,feed_publisher_url,feed_lang,feed_version
+Teaz Transit sample feed (made up),https://transit.teaz.pro,de,sample-2
