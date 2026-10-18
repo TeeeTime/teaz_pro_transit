@@ -1,0 +1,11 @@
+stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station,platform_code
+hbf,Musterstadt Hbf,51.00000,10.00000,1,,
+hbf_1,Musterstadt Hbf,51.00010,10.00020,0,hbf,1
+hbf_2,Musterstadt Hbf,51.00015,10.00025,0,hbf,2
+hbf_bus,Musterstadt Hbf/Busbahnhof,50.99980,9.99970,0,hbf,A
+markt,Musterstadt Am Markt,51.00400,10.00500,0,,
+uni,Musterstadt Universität,51.00900,10.01000,0,,
+nordpark,Musterstadt Nordpark,51.01500,10.01200,0,,
+west,Musterstadt West,50.99800,9.97000,0,,3
+beispiel,Beispielhausen Bahnhof,50.98000,9.90000,0,,1
+beispiel_entrance,Beispielhausen Bahnhof Eingang,50.98010,9.90010,2,,

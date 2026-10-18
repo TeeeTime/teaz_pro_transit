@@ -1,0 +1,10 @@
+.env
+/.vscode/
+.DS_Store
+
+# IntelliJ IDEA: lokale Projekt-/SDK-Einstellungen ignorieren,
+# geteilte Run-Configurations bleiben versioniert
+/.idea/*
+!/.idea/.gitignore
+!/.idea/runConfigurations/
+*.iml

@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration name="Run All (Frontend + Backend)" type="CompoundRunConfigurationType">
+    <toRun name="Backend (Spring Boot)" type="MavenRunConfiguration" />
+    <toRun name="Frontend (npm run dev)" type="js.build_tools.npm" />
+    <method v="2" />
+  </configuration>
+</component>

@@ -1,0 +1,3 @@
+route_id,agency_id,route_short_name,route_long_name,route_type
+bus11,mv,11,,3
+re1,bb,RE 1,Musterstadt - Beispielhausen,106
