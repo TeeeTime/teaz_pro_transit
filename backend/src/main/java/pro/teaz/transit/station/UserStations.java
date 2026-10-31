@@ -8,6 +8,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 
 import pro.teaz.transit.gtfs.FeedState;
+import pro.teaz.transit.realtime.RealtimeFeed;
 
 /**
  * The one station each user picked (table user_station).
@@ -16,6 +17,9 @@ import pro.teaz.transit.gtfs.FeedState;
  * next, so name and position are stored too: if the saved id is gone (or now
  * names a different place), the station with the same name nearest to the
  * saved position takes its place, and the stored id is updated.
+ *
+ * Picking a station starts keeping realtime for its trips (see
+ * RealtimeFeed.watch), so setting it takes a moment longer.
  */
 @Service
 public class UserStations {
@@ -29,11 +33,13 @@ public class UserStations {
 	private final JdbcClient jdbc;
 	private final FeedState feed;
 	private final StationRepository stations;
+	private final RealtimeFeed realtime;
 
-	UserStations(JdbcClient jdbc, FeedState feed, StationRepository stations) {
+	UserStations(JdbcClient jdbc, FeedState feed, StationRepository stations, RealtimeFeed realtime) {
 		this.jdbc = jdbc;
 		this.feed = feed;
 		this.stations = stations;
+		this.realtime = realtime;
 	}
 
 	/** The user's station in the served timetable; empty if none picked or it no longer exists. */
@@ -58,8 +64,12 @@ public class UserStations {
 
 	/** Picks a station; empty if there's no station with that id. */
 	public Optional<Station> choose(String userId, String stationId) {
-		Optional<Station> station = stations.find(feed.require(), stationId);
-		station.ifPresent(s -> save(userId, s));
+		FeedState.Active active = feed.require();
+		Optional<Station> station = stations.find(active, stationId);
+		station.ifPresent(s -> {
+			save(userId, s);
+			realtime.watch(active, s.id());
+		});
 		return station;
 	}
 

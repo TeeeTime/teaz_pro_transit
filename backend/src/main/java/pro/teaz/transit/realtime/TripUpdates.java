@@ -1,12 +1,17 @@
 package pro.teaz.transit.realtime;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+import com.google.protobuf.CodedInputStream;
+import com.google.protobuf.WireFormat;
 import com.google.transit.realtime.GtfsRealtime.FeedEntity;
 import com.google.transit.realtime.GtfsRealtime.FeedMessage;
 import com.google.transit.realtime.GtfsRealtime.TripDescriptor;
@@ -16,7 +21,8 @@ import com.google.transit.realtime.GtfsRealtime.TripUpdate.StopTimeUpdate;
 
 /**
  * One fetched GTFS-Realtime feed, reduced to what departure boards need:
- * per trip and service day, its delays and cancellations. Immutable, so it
+ * per trip and service day, its delays and cancellations, for the trips of
+ * the watched stations only (see {@link WatchedStations}). Immutable, so it
  * can be swapped in as a whole while requests read the previous one.
  */
 public final class TripUpdates {
@@ -27,6 +33,8 @@ public final class TripUpdates {
 
 	private static final int NO_DELAY = Integer.MIN_VALUE;
 	private static final long NO_TIME = Long.MIN_VALUE;
+	// How FeedMessage.entity starts in the wire format: its field number, length-delimited.
+	private static final int ENTITY_TAG = (FeedMessage.ENTITY_FIELD_NUMBER << 3) | WireFormat.WIRETYPE_LENGTH_DELIMITED;
 
 	/** Stop updates of one trip, in feed order (by stop_sequence, as the spec requires). */
 	private record Trip(boolean canceled, int[] sequences, String[] stopIds, int[] delays, long[] times, boolean[] skipped) {
@@ -50,34 +58,64 @@ public final class TripUpdates {
 
 	static TripUpdates from(FeedMessage message, Instant fetchedAt) {
 		Map<String, Trip> trips = new HashMap<>();
-		for (FeedEntity entity : message.getEntityList()) {
-			if (!entity.hasTripUpdate() || entity.getIsDeleted()) continue;
-			TripUpdate update = entity.getTripUpdate();
-			TripDescriptor descriptor = update.getTrip();
-			if (!descriptor.hasTripId()) continue;
+		for (FeedEntity entity : message.getEntityList()) add(trips, entity);
+		return new TripUpdates(fetchedAt, Map.copyOf(trips));
+	}
 
-			List<StopTimeUpdate> stops = update.getStopTimeUpdateList();
-			int n = stops.size();
-			int[] sequences = new int[n], delays = new int[n];
-			String[] stopIds = new String[n];
-			long[] times = new long[n];
-			boolean[] skipped = new boolean[n];
-			for (int i = 0; i < n; i++) {
-				StopTimeUpdate stop = stops.get(i);
-				sequences[i] = stop.hasStopSequence() ? stop.getStopSequence() : -1;
-				stopIds[i] = stop.hasStopId() ? stop.getStopId() : null;
-				// A board shows departures, so the departure event wins over the arrival.
-				StopTimeEvent event = stop.hasDeparture() ? stop.getDeparture() : stop.hasArrival() ? stop.getArrival() : null;
-				boolean noData = stop.getScheduleRelationship() == StopTimeUpdate.ScheduleRelationship.NO_DATA;
-				delays[i] = event != null && event.hasDelay() && !noData ? event.getDelay() : NO_DELAY;
-				times[i] = event != null && event.hasTime() && !noData ? event.getTime() : NO_TIME;
-				skipped[i] = stop.getScheduleRelationship() == StopTimeUpdate.ScheduleRelationship.SKIPPED;
+	/**
+	 * Reads a serialized FeedMessage one entity at a time and keeps only the
+	 * given trips. The feed for all of Germany is never in memory as a whole:
+	 * each entity is parsed, checked and dropped before the next is read.
+	 */
+	static TripUpdates read(InputStream in, Set<String> tripIds, Instant fetchedAt) throws IOException {
+		Map<String, Trip> trips = new HashMap<>();
+		CodedInputStream input = CodedInputStream.newInstance(in, 1 << 16);
+		for (int tag = input.readTag(); tag != 0; tag = input.readTag()) {
+			if (tag != ENTITY_TAG) {
+				input.skipField(tag);
+				continue;
 			}
-			boolean canceled = descriptor.getScheduleRelationship() == TripDescriptor.ScheduleRelationship.CANCELED;
-			trips.put(key(descriptor.getTripId(), descriptor.hasStartDate() ? descriptor.getStartDate() : null),
-					new Trip(canceled, sequences, stopIds, delays, times, skipped));
+			int limit = input.pushLimit(input.readRawVarint32());
+			FeedEntity entity = FeedEntity.parseFrom(input);
+			input.popLimit(limit);
+			if (tripIds.contains(entity.getTripUpdate().getTrip().getTripId())) add(trips, entity);
 		}
 		return new TripUpdates(fetchedAt, Map.copyOf(trips));
+	}
+
+	/** These updates plus the other's (same fetch, other trips). */
+	TripUpdates plus(TripUpdates other) {
+		Map<String, Trip> merged = new HashMap<>(trips);
+		merged.putAll(other.trips);
+		return new TripUpdates(fetchedAt, Map.copyOf(merged));
+	}
+
+	private static void add(Map<String, Trip> trips, FeedEntity entity) {
+		if (!entity.hasTripUpdate() || entity.getIsDeleted()) return;
+		TripUpdate update = entity.getTripUpdate();
+		TripDescriptor descriptor = update.getTrip();
+		if (!descriptor.hasTripId()) return;
+
+		List<StopTimeUpdate> stops = update.getStopTimeUpdateList();
+		int n = stops.size();
+		int[] sequences = new int[n], delays = new int[n];
+		String[] stopIds = new String[n];
+		long[] times = new long[n];
+		boolean[] skipped = new boolean[n];
+		for (int i = 0; i < n; i++) {
+			StopTimeUpdate stop = stops.get(i);
+			sequences[i] = stop.hasStopSequence() ? stop.getStopSequence() : -1;
+			stopIds[i] = stop.hasStopId() ? stop.getStopId() : null;
+			// A board shows departures, so the departure event wins over the arrival.
+			StopTimeEvent event = stop.hasDeparture() ? stop.getDeparture() : stop.hasArrival() ? stop.getArrival() : null;
+			boolean noData = stop.getScheduleRelationship() == StopTimeUpdate.ScheduleRelationship.NO_DATA;
+			delays[i] = event != null && event.hasDelay() && !noData ? event.getDelay() : NO_DELAY;
+			times[i] = event != null && event.hasTime() && !noData ? event.getTime() : NO_TIME;
+			skipped[i] = stop.getScheduleRelationship() == StopTimeUpdate.ScheduleRelationship.SKIPPED;
+		}
+		boolean canceled = descriptor.getScheduleRelationship() == TripDescriptor.ScheduleRelationship.CANCELED;
+		trips.put(key(descriptor.getTripId(), descriptor.hasStartDate() ? descriptor.getStartDate() : null),
+				new Trip(canceled, sequences, stopIds, delays, times, skipped));
 	}
 
 	private static String key(String tripId, String startDate) {

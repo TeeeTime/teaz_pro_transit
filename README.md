@@ -30,7 +30,12 @@ README only covers what is specific to this app.
 - **Realtime** (`realtime/`): kept in memory per trip and service day;
   delays carry over to later stops without their own update, as the
   GTFS-Realtime spec defines. Without realtime (feed down, or older than 5
-  minutes) boards show planned times and say so.
+  minutes) boards show planned times and say so. Only the trips of watched
+  stations are kept: those a user picked, and those whose board was shown
+  in the last 10 minutes. The download goes to a file in the temp directory
+  and is read from there one entity at a time, keeping what's watched; a
+  newly watched station is read from that file right away. Parsed as a
+  whole, the Germany feed (7 MB gzipped) takes about 230 MB of heap.
 - **Stations**: a GTFS station (`location_type` 1) with its platforms, or a
   stop without a parent. Search ignores case and accents (`munster` finds
   `Münster`); "Stops near me" uses the browser's location. Each user picks

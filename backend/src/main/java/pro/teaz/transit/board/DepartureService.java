@@ -70,7 +70,7 @@ public class DepartureService {
 	public Board board(Station station, int limit, int minutes) {
 		FeedState.Active active = feed.require();
 		Instant now = clock.instant();
-		TripUpdates updates = realtime.current();
+		TripUpdates updates = realtime.current(active, station.id());
 		List<String> stopIds = stations.stopIds(active, station.id());
 
 		Instant from = now.minus(updates != null ? LOOKBACK_REALTIME : LOOKBACK_PLANNED);
