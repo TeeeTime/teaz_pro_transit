@@ -11,7 +11,7 @@
     "type-check": "vue-tsc --build"
   },
   "dependencies": {
-    "@teeetime/teaz-pro-ui": "github:TeeeTime/teaz_pro_ui#v0.4.0",
+    "@teeetime/teaz-pro-ui": "github:TeeeTime/teaz_pro_ui#v0.8.0",
     "keycloak-js": "^26.2.4",
     "vue": "^3.5.42"
   },

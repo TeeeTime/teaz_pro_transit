@@ -13,6 +13,7 @@ export function createMockAuth(): AuthService {
     async init() {
       // Give the mock user every role the app checks, so all of it stays usable in dev.
       user.value = {
+        id: '00000000-0000-0000-0000-000000000001',
         name: 'Jordan Lee',
         username: 'jlee',
         email: 'jordan.lee@example.com',

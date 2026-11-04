@@ -25,6 +25,7 @@ export function createKeycloakAuth(settings: KeycloakSettings): AuthService {
     if (!token) return null
     const username = (token.preferred_username as string | undefined) ?? token.sub ?? ''
     return {
+      id: token.sub ?? '',
       name: (token.name as string | undefined) ?? username,
       username,
       email: token.email as string | undefined,

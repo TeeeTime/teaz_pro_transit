@@ -1,6 +1,8 @@
 import type { Ref } from 'vue'
 
 export interface AuthUser {
+  /** Keycloak user id (sub). Also the key of the user's profile picture: avatarUrl(id). */
+  id: string
   name: string
   username: string
   email?: string
