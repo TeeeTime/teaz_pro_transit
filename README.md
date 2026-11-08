@@ -36,6 +36,16 @@ README only covers what is specific to this app.
   and is read from there one entity at a time, keeping what's watched; a
   newly watched station is read from that file right away. Parsed as a
   whole, the Germany feed (7 MB gzipped) takes about 230 MB of heap.
+- **Journeys** (`board/JourneyService.java`): clicking a departure opens
+  its trip in a side panel: every stop with arrival and departure, delays,
+  skipped stops, and where the vehicle is right now. The position comes
+  from the (expected, else planned) times alone, as the free feed has no
+  vehicle positions: at a stop from its arrival until 30 s after its
+  departure, else between the stop it left and the next one (with the
+  share of the way). Realtime for the whole course comes from the trip's
+  update, with delays carried over to later stops; the trip is realtime-
+  watched because the board's station is. Stops between timepoints without
+  a time aren't in the database and so not in the course.
 - **Stations**: a GTFS station (`location_type` 1) with its platforms, or a
   stop without a parent. Search ignores case and accents (`munster` finds
   `Münster`); "Stops near me" uses the browser's location. Each user picks
@@ -71,7 +81,8 @@ role needed). The logged-in user's station and its next departures:
       "expectedTime": "2026-10-19T08:07:00+02:00",
       "delayMinutes": 3,
       "canceled": false,
-      "agency": "DB Regio NRW"
+      "agency": "DB Regio NRW",
+      "serviceDay": "2026-10-19"
     }
   ],
   "attribution": "Timetable: DELFI e.V. via GTFS.de (CC BY 4.0), Realtime: GTFS.de (CC BY-SA 4.0)"
@@ -87,6 +98,7 @@ role needed). The logged-in user's station and its next departures:
 | `platform` | Platform or bay, `null` if the timetable has none. |
 | `expectedTime`, `delayMinutes` | `null` when realtime knows nothing about this trip (not "on time"). |
 | `canceled` | Trip canceled, or it skips this stop. |
+| `serviceDay` | The trip's service day (GTFS times may run past midnight); with `tripId`, opens its journey. |
 | `attribution` | Must be shown with the departures (license terms of the data). |
 
 Parameters: `limit` 1-50 (default 5), `minutes` 1-360 (default 60).
@@ -111,6 +123,7 @@ Fields are only ever added to this response, never renamed or removed.
 | `GET /api/stations/nearby?lat=…&lon=…&limit=10` | Stations within 2 km, nearest first, with `distanceMeters`. |
 | `GET /api/stations/{id}` | One station. |
 | `GET /api/stations/{id}/departures?limit=20&minutes=90` | Board of any station (same shape as `/api/board`). |
+| `GET /api/trips/{tripId}?day=…&station=…` | A departure's journey: all stops with planned and expected arrival/departure, and `position` (`status` `NOT_STARTED`, `AT_STOP`, `BETWEEN`, `ARRIVED` or `CANCELED`, with `stopIndex`, `nextStopIndex` and `progress` 0-1). `day`: the departure's `serviceDay` (default today), `station`: the board it was opened from (keeps the trip's realtime). `tracked`: realtime knows this trip. `404` for an unknown trip or a day it doesn't run. |
 | `GET /api/me/station` | `{ "station": … }`, `null` if none picked. |
 | `PUT /api/me/station` | Body `{ "stationId": "…" }`: picks it. `404` for an unknown id. |
 | `DELETE /api/me/station` | Forgets the pick. |
@@ -166,10 +179,17 @@ reached over the external Docker network `db`, with its **own database
 rights). It never reads another app's database.
 
 - Schema: Flyway migrations in `backend/src/main/resources/db/migration`.
-  Exception: the importer drops and recreates the index on
-  `stop_times_<slot>` around each load (building it once is much faster
-  than updating it for every row); its definition in `FeedImporter` must
-  match `V1__init.sql`.
+  Exception: the importer drops and recreates the indexes on
+  `stop_times_<slot>` around each load (building them once is much faster
+  than updating them for every row); their definitions in `FeedImporter`
+  must match `V1__init.sql` and `V2__trip_course.sql`.
+- `V2__trip_course.sql` (journeys) adds `arrival_secs` and an index on
+  `trip_id` to `stop_times`. On an existing database the migration builds
+  that index over the loaded timetable at the next start (a minute or so
+  for all of Germany); arrival times stay empty (departure times stand in)
+  until the next import. Size of the index not measured yet: Postgres
+  stores each trip_id once (B-tree deduplication), so expect a few hundred
+  MB rather than GB.
 - Connection only from the environment: `SPRING_DATASOURCE_URL`,
   `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` in `.env`.
 - The only data that isn't re-downloaded is `user_station` (each user's

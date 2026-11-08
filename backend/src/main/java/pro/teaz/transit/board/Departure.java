@@ -1,5 +1,6 @@
 package pro.teaz.transit.board;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 /**
@@ -16,6 +17,8 @@ import java.time.OffsetDateTime;
  * @param delayMinutes  expected minus planned, rounded; null without realtime data
  * @param canceled      canceled, or doesn't stop here today
  * @param agency        operator, e.g. "Stadtwerke Münster"
+ * @param serviceDay    the trip's service day (GTFS times may run past midnight):
+ *                      with tripId, what {@code /api/trips/{tripId}?day=} needs
  */
 public record Departure(
 		String tripId,
@@ -27,11 +30,24 @@ public record Departure(
 		OffsetDateTime expectedTime,
 		Integer delayMinutes,
 		boolean canceled,
-		String agency) {
+		String agency,
+		LocalDate serviceDay) {
 
 	/** When it actually leaves, as far as known: what the board is sorted by. */
 	OffsetDateTime bestTime() {
 		return expectedTime != null ? expectedTime : plannedTime;
+	}
+
+	/** What the vehicle shows: the route's short name, else the trip's, else the route's long name. */
+	static String line(String routeShortName, String tripShortName, String routeLongName) {
+		if (notBlank(routeShortName)) return routeShortName;
+		if (notBlank(tripShortName)) return tripShortName;
+		if (notBlank(routeLongName)) return routeLongName;
+		return "?";
+	}
+
+	static boolean notBlank(String text) {
+		return text != null && !text.isBlank();
 	}
 
 	/** GTFS route_type (basic or extended) as one of a few modes a board distinguishes. */

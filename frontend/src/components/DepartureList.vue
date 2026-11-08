@@ -1,26 +1,32 @@
 <script setup lang="ts">
-import { clock, countdown, MODE_LABELS } from '@/format'
+import { clock, countdown, departureKey, MODE_LABELS } from '@/format'
 import type { Departure } from '@/types'
 
 defineProps<{
   departures: Departure[]
   /** Date.now() of the last tick, so countdowns move between refreshes. */
   now: number
+  /** key() of the departure whose journey is open, if any. */
+  selected?: string | null
 }>()
 
+const emit = defineEmits<{ select: [departure: Departure, row: HTMLElement] }>()
+
 function key(departure: Departure): string {
-  return `${departure.tripId}@${departure.plannedTime}`
+  return departureKey(departure)
 }
 </script>
 
 <template>
   <ol class="departures">
-    <li
-      v-for="departure in departures"
-      :key="key(departure)"
-      class="departure"
-      :class="{ 'departure--canceled': departure.canceled }"
-    >
+    <li v-for="departure in departures" :key="key(departure)">
+      <button
+        type="button"
+        class="departure"
+        :class="{ 'departure--canceled': departure.canceled, 'departure--selected': selected === key(departure) }"
+        :aria-label="`${departure.line} to ${departure.destination}, ${clock(departure.plannedTime)}: show its journey`"
+        @click="emit('select', departure, $event.currentTarget as HTMLElement)"
+      >
       <span class="departure__time">
         <span class="departure__planned">{{ clock(departure.plannedTime) }}</span>
         <span v-if="departure.canceled" class="departure__alert">Canceled</span>
@@ -40,6 +46,7 @@ function key(departure: Departure): string {
       </span>
 
       <span v-if="!departure.canceled" class="departure__countdown">{{ countdown(departure, now) }}</span>
+      </button>
     </li>
   </ol>
 </template>
@@ -52,17 +59,43 @@ function key(departure: Departure): string {
   border: 1px solid var(--color-border);
 }
 
+.departures > li {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.departures > li:last-child {
+  border-bottom: none;
+}
+
 .departure {
   display: grid;
   grid-template-columns: 3.75rem 4.5rem minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
+  width: 100%;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--color-border);
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
 }
 
-.departure:last-child {
-  border-bottom: none;
+.departure:hover {
+  background-color: var(--color-surface-hover);
+}
+
+.departure:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.departure--selected {
+  background-color: var(--color-surface-active);
+  border-left-color: var(--color-accent);
 }
 
 .departure__time {

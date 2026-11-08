@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,7 +21,7 @@ import com.google.transit.realtime.GtfsRealtime.TripUpdate.StopTimeEvent;
 import com.google.transit.realtime.GtfsRealtime.TripUpdate.StopTimeUpdate;
 
 /**
- * One fetched GTFS-Realtime feed, reduced to what departure boards need:
+ * One fetched GTFS-Realtime feed, reduced to what boards and journeys need:
  * per trip and service day, its delays and cancellations, for the trips of
  * the watched stations only (see {@link WatchedStations}). Immutable, so it
  * can be swapped in as a whole while requests read the previous one.
@@ -36,8 +37,36 @@ public final class TripUpdates {
 	// How FeedMessage.entity starts in the wire format: its field number, length-delimited.
 	private static final int ENTITY_TAG = (FeedMessage.ENTITY_FIELD_NUMBER << 3) | WireFormat.WIRETYPE_LENGTH_DELIMITED;
 
-	/** Stop updates of one trip, in feed order (by stop_sequence, as the spec requires). */
-	private record Trip(boolean canceled, int[] sequences, String[] stopIds, int[] delays, long[] times, boolean[] skipped) {
+	/**
+	 * What realtime says about one stop of a trip's course: its arrival and
+	 * departure (each null without data), or skipped (the vehicle doesn't stop).
+	 */
+	public record StopEvents(StopRealtime arrival, StopRealtime departure, boolean skipped) {
+	}
+
+	/** Realtime for a trip's whole course: canceled as a whole, else one entry per stop asked for. */
+	public record Course(boolean canceled, List<StopEvents> stops) {
+	}
+
+	/**
+	 * Stop updates of one trip, in feed order (by stop_sequence, as the spec
+	 * requires). Arrival and departure each as delay and absolute time.
+	 */
+	private record Trip(boolean canceled, int[] sequences, String[] stopIds, int[] arrivalDelays, long[] arrivalTimes,
+			int[] departureDelays, long[] departureTimes, boolean[] skipped) {
+
+		boolean hasDeparture(int i) {
+			return departureDelays[i] != NO_DELAY || departureTimes[i] != NO_TIME;
+		}
+
+		/** What a board shows: the departure event, else the arrival. */
+		int delay(int i) {
+			return hasDeparture(i) ? departureDelays[i] : arrivalDelays[i];
+		}
+
+		long time(int i) {
+			return hasDeparture(i) ? departureTimes[i] : arrivalTimes[i];
+		}
 	}
 
 	private final Instant fetchedAt;
@@ -98,24 +127,27 @@ public final class TripUpdates {
 
 		List<StopTimeUpdate> stops = update.getStopTimeUpdateList();
 		int n = stops.size();
-		int[] sequences = new int[n], delays = new int[n];
+		int[] sequences = new int[n], arrivalDelays = new int[n], departureDelays = new int[n];
 		String[] stopIds = new String[n];
-		long[] times = new long[n];
+		long[] arrivalTimes = new long[n], departureTimes = new long[n];
 		boolean[] skipped = new boolean[n];
 		for (int i = 0; i < n; i++) {
 			StopTimeUpdate stop = stops.get(i);
 			sequences[i] = stop.hasStopSequence() ? stop.getStopSequence() : -1;
 			stopIds[i] = stop.hasStopId() ? stop.getStopId() : null;
-			// A board shows departures, so the departure event wins over the arrival.
-			StopTimeEvent event = stop.hasDeparture() ? stop.getDeparture() : stop.hasArrival() ? stop.getArrival() : null;
 			boolean noData = stop.getScheduleRelationship() == StopTimeUpdate.ScheduleRelationship.NO_DATA;
-			delays[i] = event != null && event.hasDelay() && !noData ? event.getDelay() : NO_DELAY;
-			times[i] = event != null && event.hasTime() && !noData ? event.getTime() : NO_TIME;
+			StopTimeEvent arrival = stop.hasArrival() && !noData ? stop.getArrival() : null;
+			StopTimeEvent departure = stop.hasDeparture() && !noData ? stop.getDeparture() : null;
+			arrivalDelays[i] = arrival != null && arrival.hasDelay() ? arrival.getDelay() : NO_DELAY;
+			arrivalTimes[i] = arrival != null && arrival.hasTime() ? arrival.getTime() : NO_TIME;
+			departureDelays[i] = departure != null && departure.hasDelay() ? departure.getDelay() : NO_DELAY;
+			departureTimes[i] = departure != null && departure.hasTime() ? departure.getTime() : NO_TIME;
 			skipped[i] = stop.getScheduleRelationship() == StopTimeUpdate.ScheduleRelationship.SKIPPED;
 		}
 		boolean canceled = descriptor.getScheduleRelationship() == TripDescriptor.ScheduleRelationship.CANCELED;
 		trips.put(key(descriptor.getTripId(), descriptor.hasStartDate() ? descriptor.getStartDate() : null),
-				new Trip(canceled, sequences, stopIds, delays, times, skipped));
+				new Trip(canceled, sequences, stopIds, arrivalDelays, arrivalTimes, departureDelays, departureTimes,
+						skipped));
 	}
 
 	private static String key(String tripId, String startDate) {
@@ -129,8 +161,7 @@ public final class TripUpdates {
 	 * as the GTFS-Realtime spec defines.
 	 */
 	public StopRealtime lookup(String tripId, LocalDate serviceDay, int stopSequence, String stopId) {
-		Trip trip = trips.get(key(tripId, serviceDay.format(DateTimeFormatter.BASIC_ISO_DATE)));
-		if (trip == null) trip = trips.get(tripId);
+		Trip trip = find(tripId, serviceDay);
 		if (trip == null) return null;
 		if (trip.canceled()) return new StopRealtime(null, null, true);
 
@@ -140,16 +171,88 @@ public final class TripUpdates {
 			boolean here = bySequence ? trip.sequences()[i] == stopSequence : stopId.equals(trip.stopIds()[i]);
 			if (here) {
 				if (trip.skipped()[i]) return new StopRealtime(null, null, true);
-				Instant time = trip.times()[i] != NO_TIME ? Instant.ofEpochSecond(trip.times()[i]) : null;
+				Instant time = trip.time(i) != NO_TIME ? Instant.ofEpochSecond(trip.time(i)) : null;
 				Integer delay = null;
-				if (trip.delays()[i] != NO_DELAY) delay = trip.delays()[i];
+				if (trip.delay(i) != NO_DELAY) delay = trip.delay(i);
 				// An absolute time says it all; a delay from earlier stops would only guess.
 				else if (time == null && carried != NO_DELAY) delay = carried;
 				return time == null && delay == null ? null : new StopRealtime(delay, time, false);
 			}
 			if (bySequence && trip.sequences()[i] > stopSequence) break;
-			if (trip.delays()[i] != NO_DELAY) carried = trip.delays()[i];
+			if (trip.delay(i) != NO_DELAY) carried = trip.delay(i);
 		}
 		return carried == NO_DELAY ? null : new StopRealtime(carried, null, false);
+	}
+
+	/**
+	 * Realtime for a trip's whole course (on its service day): for each of the
+	 * given stops, in order, its arrival and departure. Null if the feed knows
+	 * nothing about the trip.
+	 *
+	 * As in {@link #lookup}, a delay carries over to later events without
+	 * their own update: from an arrival to the same stop's departure, and from
+	 * a stop to the following ones. A stop's update is found by stop_sequence,
+	 * or by stop_id where the feed gives no sequence.
+	 */
+	public Course course(String tripId, LocalDate serviceDay, int[] stopSequences, String[] stopIds) {
+		Trip trip = find(tripId, serviceDay);
+		if (trip == null) return null;
+		if (trip.canceled()) return new Course(true, List.of());
+
+		List<StopEvents> course = new ArrayList<>(stopSequences.length);
+		int carried = NO_DELAY;
+		int next = 0; // the first update not used yet
+		for (int k = 0; k < stopSequences.length; k++) {
+			// Updates for stops before this one (or not on the course at all) only pass on their delay.
+			int own = -1;
+			while (next < trip.sequences().length) {
+				int sequence = trip.sequences()[next];
+				boolean matches = sequence >= 0 ? sequence == stopSequences[k] : stopIds[k].equals(trip.stopIds()[next]);
+				if (matches) {
+					own = next++;
+					break;
+				}
+				boolean before = sequence >= 0 ? sequence < stopSequences[k] : !onCourse(trip.stopIds()[next], stopIds, k);
+				if (!before) break;
+				if (trip.arrivalDelays()[next] != NO_DELAY) carried = trip.arrivalDelays()[next];
+				if (trip.departureDelays()[next] != NO_DELAY) carried = trip.departureDelays()[next];
+				next++;
+			}
+			if (own < 0) {
+				StopRealtime guess = carried == NO_DELAY ? null : new StopRealtime(carried, null, false);
+				course.add(new StopEvents(guess, guess, false));
+				continue;
+			}
+			if (trip.skipped()[own]) {
+				course.add(new StopEvents(null, null, true));
+				continue;
+			}
+			StopRealtime arrival = event(trip.arrivalDelays()[own], trip.arrivalTimes()[own], carried);
+			if (trip.arrivalDelays()[own] != NO_DELAY) carried = trip.arrivalDelays()[own];
+			StopRealtime departure = event(trip.departureDelays()[own], trip.departureTimes()[own], carried);
+			if (trip.departureDelays()[own] != NO_DELAY) carried = trip.departureDelays()[own];
+			course.add(new StopEvents(arrival, departure, false));
+		}
+		return new Course(false, List.copyOf(course));
+	}
+
+	private static StopRealtime event(int delay, long time, int carried) {
+		Instant at = time != NO_TIME ? Instant.ofEpochSecond(time) : null;
+		if (delay != NO_DELAY) return new StopRealtime(delay, at, false);
+		if (at != null) return new StopRealtime(null, at, false);
+		return carried == NO_DELAY ? null : new StopRealtime(carried, null, false);
+	}
+
+	/** Whether the stop comes at or after position from of the course. */
+	private static boolean onCourse(String stopId, String[] stopIds, int from) {
+		for (int i = from; i < stopIds.length; i++) {
+			if (stopIds[i].equals(stopId)) return true;
+		}
+		return false;
+	}
+
+	private Trip find(String tripId, LocalDate serviceDay) {
+		Trip trip = trips.get(key(tripId, serviceDay.format(DateTimeFormatter.BASIC_ISO_DATE)));
+		return trip != null ? trip : trips.get(tripId);
 	}
 }

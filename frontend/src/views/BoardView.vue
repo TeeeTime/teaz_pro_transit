@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import DepartureList from '@/components/DepartureList.vue'
+import JourneyPanel from '@/components/JourneyPanel.vue'
 import StationPicker from '@/components/StationPicker.vue'
 import { api, ApiError, errorMessage } from '@/api'
-import { clock } from '@/format'
-import type { Board, MyStation, Station } from '@/types'
+import { clock, departureKey } from '@/format'
+import type { Board, Departure, MyStation, Station } from '@/types'
 
 // The backend fetches realtime at most once a minute; twice as often keeps the board current.
 const REFRESH_MS = 30_000
@@ -18,6 +19,20 @@ const error = ref<string | null>(null)
 // "The timetable is being imported": not an error, just wait.
 const notReady = ref<string | null>(null)
 const now = ref(Date.now())
+// The departure whose journey is shown in the side panel, and the row it was opened from (focus returns there).
+const selected = ref<Departure | null>(null)
+let openedFrom: HTMLElement | null = null
+
+function openJourney(departure: Departure, row: HTMLElement) {
+  selected.value = departure
+  openedFrom = row
+}
+
+function closeJourney() {
+  selected.value = null
+  openedFrom?.focus()
+  openedFrom = null
+}
 
 async function loadStation() {
   try {
@@ -55,6 +70,7 @@ async function choose(chosen: Station) {
     station.value = (await api.put<MyStation>('/api/me/station', { stationId: chosen.id })).station
     picking.value = false
     board.value = null
+    selected.value = null
     await loadBoard()
   } catch (e) {
     handle(e)
@@ -98,11 +114,25 @@ onBeforeUnmount(() => {
       </header>
 
       <template v-if="board">
-        <DepartureList v-if="board.departures.length" :departures="board.departures" :now="now" />
+        <DepartureList
+          v-if="board.departures.length"
+          :departures="board.departures"
+          :now="now"
+          :selected="selected && departureKey(selected)"
+          @select="openJourney"
+        />
         <p v-else class="board__empty">No departures in the next 90 minutes.</p>
         <p class="board__attribution">{{ board.attribution }}</p>
       </template>
       <p v-else-if="!error && !notReady" class="board__empty">Loading departures…</p>
+
+      <JourneyPanel
+        v-if="selected"
+        :departure="selected"
+        :station-id="station.id"
+        :now="now"
+        @close="closeJourney"
+      />
     </section>
   </div>
 </template>

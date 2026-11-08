@@ -112,6 +112,10 @@ public class DepartureService {
 	 * days when the clocks change.
 	 */
 	private ZonedDateTime serviceDayStart(LocalDate day) {
+		return serviceDayStart(day, zone);
+	}
+
+	static ZonedDateTime serviceDayStart(LocalDate day, ZoneId zone) {
 		return day.atTime(12, 0).atZone(zone).minusHours(12);
 	}
 
@@ -172,14 +176,11 @@ public class DepartureService {
 		}
 
 		return new Departure(row.tripId(), line(row), Departure.mode(row.routeType()), destination(row),
-				row.platform(), planned, expected, delayMinutes, canceled, row.agency());
+				row.platform(), planned, expected, delayMinutes, canceled, row.agency(), day);
 	}
 
 	private static String line(Row row) {
-		if (notBlank(row.routeShortName())) return row.routeShortName();
-		if (notBlank(row.tripShortName())) return row.tripShortName();
-		if (notBlank(row.routeLongName())) return row.routeLongName();
-		return "?";
+		return Departure.line(row.routeShortName(), row.tripShortName(), row.routeLongName());
 	}
 
 	private static String destination(Row row) {
@@ -189,10 +190,10 @@ public class DepartureService {
 	}
 
 	private static boolean notBlank(String text) {
-		return text != null && !text.isBlank();
+		return Departure.notBlank(text);
 	}
 
-	private String attribution(FeedState.Active active, TripUpdates updates) {
+	String attribution(FeedState.Active active, TripUpdates updates) {
 		String timetable = FeedImporter.SAMPLE.equals(active.source())
 				? "Sample timetable (made up)" : properties.gtfs().attribution();
 		String live = properties.realtime().attribution();
