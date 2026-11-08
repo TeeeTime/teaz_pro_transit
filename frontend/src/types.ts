@@ -26,6 +26,8 @@ export interface Departure {
   delayMinutes: number | null
   canceled: boolean
   agency: string | null
+  /** The trip's service day, e.g. 2026-10-19 (GTFS times may run past midnight): opens its Journey. */
+  serviceDay: string
 }
 
 export interface Board {
@@ -34,6 +36,54 @@ export interface Board {
   /** False: every time is a planned time. */
   realtime: boolean
   departures: Departure[]
+  attribution: string
+}
+
+export interface JourneyStop {
+  stopId: string
+  stationId: string
+  name: string
+  platform: string | null
+  plannedArrival: string
+  expectedArrival: string | null
+  plannedDeparture: string
+  expectedDeparture: string | null
+  /** At the departure (last stop: arrival); null without realtime. */
+  delayMinutes: number | null
+  /** The vehicle doesn't stop here. */
+  canceled: boolean
+  /** The vehicle has already left. */
+  passed: boolean
+}
+
+export type PositionStatus = 'NOT_STARTED' | 'AT_STOP' | 'BETWEEN' | 'ARRIVED' | 'CANCELED'
+
+export interface Position {
+  status: PositionStatus
+  /** NOT_STARTED: first stop; AT_STOP: that stop; BETWEEN: the one it left; ARRIVED: last stop. */
+  stopIndex: number | null
+  /** BETWEEN: the stop it heads for. */
+  nextStopIndex: number | null
+  /** BETWEEN: 0..1 of the way to the next stop. */
+  progress: number | null
+}
+
+/** A trip's course, from GET /api/trips/{tripId}. */
+export interface Journey {
+  tripId: string
+  serviceDay: string
+  line: string
+  mode: Mode
+  destination: string
+  agency: string | null
+  generatedAt: string
+  /** Realtime data available at all. */
+  realtime: boolean
+  /** Realtime knows this trip; false: every time is a planned time. */
+  tracked: boolean
+  canceled: boolean
+  stops: JourneyStop[]
+  position: Position
   attribution: string
 }
 

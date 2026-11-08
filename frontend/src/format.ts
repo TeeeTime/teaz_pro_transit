@@ -14,6 +14,16 @@ export function countdown(departure: Departure, now: number): string | null {
   return minutes < 60 ? `${minutes} min` : null
 }
 
+/** Identifies a departure on a board (a trip can pass a station more than once). */
+export function departureKey(departure: Departure): string {
+  return `${departure.tripId}@${departure.plannedTime}`
+}
+
+/** Whole minutes from now until the given time, 0 if it's past. */
+export function minutesUntil(iso: string, now: number): number {
+  return Math.max(0, Math.round((Date.parse(iso) - now) / 60_000))
+}
+
 export const MODE_LABELS: Record<Mode, string> = {
   TRAIN: 'Train',
   SUBURBAN: 'S-Bahn',

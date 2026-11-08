@@ -50,7 +50,7 @@ public class FeedImporter {
 	/** Source name of the bundled feed (src/main/resources/sample-feed). */
 	public static final String SAMPLE = "sample";
 	// Bump when the bundled sample feed changes, so dev databases re-import it.
-	private static final String SAMPLE_VERSION = "sample-2";
+	private static final String SAMPLE_VERSION = "sample-3";
 
 	private static final Logger log = LoggerFactory.getLogger(FeedImporter.class);
 	private static final DateTimeFormatter GTFS_DATE = DateTimeFormatter.BASIC_ISO_DATE;
@@ -182,6 +182,7 @@ public class FeedImporter {
 			sideConnection.setAutoCommit(true);
 			truncate(connection, target);
 			execute(connection, "DROP INDEX IF EXISTS " + stopTimesIndex(target));
+			execute(connection, "DROP INDEX IF EXISTS " + tripIndex(target));
 
 			importAgencies(source, connection, target);
 			importRoutes(source, connection, target);
@@ -194,6 +195,7 @@ public class FeedImporter {
 			log.info("Indexing stop times");
 			execute(connection, "CREATE INDEX " + stopTimesIndex(target) + " ON " + target.table("stop_times")
 					+ " (stop_id, departure_secs)");
+			execute(connection, "CREATE INDEX " + tripIndex(target) + " ON " + target.table("stop_times") + " (trip_id)");
 			if (isPostgres(connection)) {
 				for (String table : Slot.TABLES) execute(connection, "ANALYZE " + target.table(table));
 			}
@@ -213,6 +215,11 @@ public class FeedImporter {
 	/** Must match the index in V1__init.sql. */
 	private static String stopTimesIndex(Slot slot) {
 		return slot.table("stop_times") + "_stop_dep";
+	}
+
+	/** Must match the index in V2__trip_course.sql. */
+	private static String tripIndex(Slot slot) {
+		return slot.table("stop_times") + "_trip";
 	}
 
 	private static void truncate(Connection connection, Slot slot) throws SQLException {
@@ -347,7 +354,8 @@ public class FeedImporter {
 		Map<String, Integer> headsigns = new HashMap<>();
 		try (GtfsTable rows = table(source, "stop_times.txt", true);
 				TableWriter out = TableWriter.open(connection, slot.table("stop_times"),
-						List.of("trip_id", "stop_id", "stop_sequence", "departure_secs", "headsign_id", "no_pickup"));
+						List.of("trip_id", "stop_id", "stop_sequence", "departure_secs", "arrival_secs", "headsign_id",
+								"no_pickup"));
 				TableWriter ends = TableWriter.open(sideConnection, slot.table("trip_ends"),
 						List.of("trip_id", "last_stop_id", "last_sequence"))) {
 			int trip = rows.requiredColumn("trip_id"), stop = rows.requiredColumn("stop_id"),
@@ -371,13 +379,14 @@ public class FeedImporter {
 					lastStop = stopId;
 				}
 
-				String time = row.get(departure);
-				if (time.isEmpty()) time = row.get(arrival);
+				String departs = row.get(departure), arrives = row.get(arrival);
+				if (departs.isEmpty()) departs = arrives;
+				if (arrives.isEmpty()) arrives = departs;
 				// Stops between timepoints may have no time; a board can't show those.
-				if (time.isEmpty()) continue;
+				if (departs.isEmpty()) continue;
 				String text = row.get(headsign);
 				Integer headsignId = text.isEmpty() ? null : headsigns.computeIfAbsent(text, t -> headsigns.size() + 1);
-				out.row(tripId, stopId, seq, parseTime(time), headsignId, "1".equals(row.get(pickup)));
+				out.row(tripId, stopId, seq, parseTime(departs), parseTime(arrives), headsignId, "1".equals(row.get(pickup)));
 				if (out.rows() % 5_000_000 == 0) log.info("Imported {} stop times", out.rows());
 			}
 			if (currentTrip != null) ends.row(currentTrip, lastStop, lastSequence);

@@ -86,6 +86,18 @@ public class RealtimeFeed {
 	}
 
 	/**
+	 * Like {@link #current}, for a caller that doesn't know which station the
+	 * trips it looks at belong to: no station is watched.
+	 */
+	public TripUpdates latest() {
+		if (!settings.enabled()) return null;
+		lastDemand = Instant.now();
+		if (stale(settings.pollInterval())) fetchInBackground();
+		TripUpdates updates = current;
+		return updates != null && !isOlderThan(updates.fetchedAt(), settings.maxAge()) ? updates : null;
+	}
+
+	/**
 	 * Keeps realtime for the station from now on, e.g. because a user picked
 	 * it: loads its trips from the database and reads their updates from the
 	 * last download.

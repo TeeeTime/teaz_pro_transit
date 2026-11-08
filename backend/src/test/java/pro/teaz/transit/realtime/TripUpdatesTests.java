@@ -122,4 +122,68 @@ class TripUpdatesTests {
 		assertThat(both.fetchedAt()).isEqualTo(first.fetchedAt());
 		assertThat(both.lookup("t2", DAY, 1, "a").delaySeconds()).isEqualTo(120);
 	}
+
+	private static final int[] SEQUENCES = { 10, 20, 30 };
+	private static final String[] STOPS = { "a", "b", "c" };
+
+	private static StopTimeEvent delay(int seconds) {
+		return StopTimeEvent.newBuilder().setDelay(seconds).build();
+	}
+
+	@Test
+	void courseCarriesDelaysFromArrivalToDepartureAndOnToLaterStops() {
+		StopTimeUpdate arrivalOnly = StopTimeUpdate.newBuilder().setStopSequence(20).setArrival(delay(120)).build();
+		TripUpdates updates = updates(trip("t1", "20261019", TripDescriptor.ScheduleRelationship.SCHEDULED, arrivalOnly));
+
+		TripUpdates.Course course = updates.course("t1", DAY, SEQUENCES, STOPS);
+		assertThat(course.canceled()).isFalse();
+		assertThat(course.stops()).hasSize(3);
+		assertThat(course.stops().get(0).arrival()).isNull();
+		assertThat(course.stops().get(0).departure()).isNull();
+		assertThat(course.stops().get(1).arrival().delaySeconds()).isEqualTo(120);
+		assertThat(course.stops().get(1).departure().delaySeconds()).isEqualTo(120);
+		assertThat(course.stops().get(2).arrival().delaySeconds()).isEqualTo(120);
+	}
+
+	@Test
+	void courseTakesTheDepartureDelayWhereGiven() {
+		StopTimeUpdate catchingUp = StopTimeUpdate.newBuilder().setStopSequence(20).setArrival(delay(120))
+				.setDeparture(delay(60)).build();
+		TripUpdates updates = updates(trip("t1", "20261019", TripDescriptor.ScheduleRelationship.SCHEDULED, catchingUp));
+
+		TripUpdates.Course course = updates.course("t1", DAY, SEQUENCES, STOPS);
+		assertThat(course.stops().get(1).arrival().delaySeconds()).isEqualTo(120);
+		assertThat(course.stops().get(1).departure().delaySeconds()).isEqualTo(60);
+		assertThat(course.stops().get(2).arrival().delaySeconds()).isEqualTo(60);
+		// The same through the board's lookup: the departure wins.
+		assertThat(updates.lookup("t1", DAY, 20, "b").delaySeconds()).isEqualTo(60);
+	}
+
+	@Test
+	void courseMatchesStopsByIdWithoutSequenceAndPassesOnUpdatesOffTheCourse() {
+		StopTimeUpdate elsewhere = StopTimeUpdate.newBuilder().setStopId("not-on-course").setDeparture(delay(30)).build();
+		StopTimeUpdate atC = StopTimeUpdate.newBuilder().setStopId("c").setArrival(delay(240)).build();
+		TripUpdates updates = updates(trip("t1", null, TripDescriptor.ScheduleRelationship.SCHEDULED, elsewhere, atC));
+
+		TripUpdates.Course course = updates.course("t1", DAY, SEQUENCES, STOPS);
+		assertThat(course.stops().get(0).departure().delaySeconds()).isEqualTo(30);
+		assertThat(course.stops().get(1).departure().delaySeconds()).isEqualTo(30);
+		assertThat(course.stops().get(2).arrival().delaySeconds()).isEqualTo(240);
+	}
+
+	@Test
+	void courseOfCanceledTripsSkippedStopsAndUnknownTrips() {
+		StopTimeUpdate skipped = StopTimeUpdate.newBuilder().setStopSequence(20)
+				.setScheduleRelationship(StopTimeUpdate.ScheduleRelationship.SKIPPED).build();
+		TripUpdates updates = updates(
+				trip("gone", "20261019", TripDescriptor.ScheduleRelationship.CANCELED),
+				trip("t2", "20261019", TripDescriptor.ScheduleRelationship.SCHEDULED, stop(10, 60), skipped));
+
+		assertThat(updates.course("gone", DAY, SEQUENCES, STOPS).canceled()).isTrue();
+		TripUpdates.Course course = updates.course("t2", DAY, SEQUENCES, STOPS);
+		assertThat(course.stops().get(1).skipped()).isTrue();
+		assertThat(course.stops().get(2).skipped()).isFalse();
+		assertThat(course.stops().get(2).departure().delaySeconds()).isEqualTo(60);
+		assertThat(updates.course("other", DAY, SEQUENCES, STOPS)).isNull();
+	}
 }
